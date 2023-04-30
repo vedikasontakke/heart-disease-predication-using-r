@@ -1,0 +1,271 @@
+library(e1071)
+library(randomForest)  
+library(rpart)  
+library(ada)  
+
+#plotting libraries
+library(caret)
+library(ggplot2)
+library(gridExtra)
+library(grid)
+library(tidyr)
+
+# Load the data
+heart_data <- read.csv("heart_updated.csv")
+
+heart_data$HeartDisease <- as.factor(heart_data$HeartDisease)
+summary(heart_data)
+
+head(heart_data)
+
+# Split the data into training and validation datasets
+set.seed(123)   # for reproducibility
+train_index <- sample(nrow(heart_data), 0.8 * nrow(heart_data))
+train_data <- heart_data[train_index, ]
+head(train_data)
+val_data <- heart_data[-train_index, ]
+head(val_data)
+
+
+# Create the SVM model
+svm_model <- svm(HeartDisease ~ ., data = train_data, kernel = "linear", cost = 1, scale = TRUE)
+
+# Create the random forest model
+rf_model <- randomForest(HeartDisease ~ ., data = train_data, ntree = 500, mtry = sqrt(ncol(train_data)), type = "classification")
+
+# Create the random decision tree
+dt_model <- rpart(HeartDisease ~ ., data = train_data, method = "class")
+
+ada_model <- ada(x = as.data.frame(train_data[, -ncol(train_data)]),y = train_data$HeartDisease, iter = 200)
+
+# Evaluate the accuracy of the models on the validation dataset
+svm_pred <- predict(svm_model, newdata = val_data)
+svm_acc <- mean(svm_pred == val_data$HeartDisease)
+svm_cm <- confusionMatrix(svm_pred, val_data$HeartDisease)
+print("SVM model confusion matrix:")
+print(svm_cm$table)
+
+
+rf_pred <- predict(rf_model, newdata = val_data)
+rf_acc <- mean(rf_pred == val_data$HeartDisease)
+rf_cm <- confusionMatrix(rf_pred, val_data$HeartDisease)
+print("Random Forest model confusion matrix:")
+print(rf_cm$table)
+
+
+dt_pred <- predict(dt_model, newdata = val_data, type = "class")
+dt_acc <- mean(dt_pred == val_data$HeartDisease)
+dt_cm <- confusionMatrix(dt_pred, val_data$HeartDisease)
+print("Decision Tree model confusion matrix:")
+print(dt_cm$table)
+
+
+ada_pred <- predict(ada_model, as.data.frame(train_data[, -ncol(train_data)]))
+ada_acc <- mean(ada_pred == train_data$HeartDisease)
+cat("AdaBoost Accuracy:", ada_acc, "\n")
+
+# Select the top 3 models based on accuracy
+if (svm_acc > rf_acc & svm_acc > dt_acc & svm_acc > ada_acc) {
+  best_model1 <- svm_model
+  if (rf_acc > dt_acc & rf_acc > ada_acc) {
+    best_model2 <- rf_model
+    if (dt_acc > ada_acc) {
+      best_model3 <- dt_model
+    } else {
+      best_model3 <- ada_model
+    }
+  } else if (dt_acc > ada_acc) {
+    best_model2 <- dt_model
+    best_model3 <- rf_model
+  } else {
+    best_model2 <- ada_model
+    best_model3 <- rf_model
+  }
+} else if (rf_acc > svm_acc & rf_acc > dt_acc & rf_acc > ada_acc) {
+  best_model1 <- rf_model
+  if (svm_acc > dt_acc & svm_acc > ada_acc) {
+    best_model2 <- svm_model
+    if (dt_acc > ada_acc) {
+      best_model3 <- dt_model
+    } else {
+      best_model3 <- ada_model
+    }
+  } else if (dt_acc > ada_acc) {
+    best_model2 <- dt_model
+    best_model3 <- svm_model
+  } else {
+    best_model2 <- ada_model
+    best_model3 <- svm_model
+  }
+} else if (dt_acc > svm_acc & dt_acc > rf_acc & dt_acc > ada_acc) {
+  best_model1 <- dt_model
+  if (svm_acc > rf_acc & svm_acc > ada_acc) {
+    best_model2 <- svm_model
+    if (rf_acc > ada_acc) {
+      best_model3 <- rf_model
+    } else {
+      best_model3 <- ada_model
+    }
+  } else if (rf_acc > ada_acc) {
+    best_model2 <- rf_model
+    best_model3 <- svm_model
+  } else {
+    best_model2 <- ada_model
+    best_model3 <- svm_model
+  }
+} else {
+  best_model1 <- ada_model
+  if (svm_acc > rf_acc & svm_acc > dt_acc) {
+    best_model2 <- svm_model
+    if (rf_acc > dt_acc) {
+      best_model3 <- rf_model
+    } else {
+      best_model3 <- dt_model
+    }
+  } else if (rf_acc > dt_acc) {
+    best_model2 <- rf_model
+    best_model3 <- svm_model
+  } else {
+    best_model2 <- dt_model
+    best_model3 <- svm_model
+  }
+}
+
+print(best_model1)
+print(best_model2)
+print(best_model3)
+
+# Create the ensemble model by combining the three best models
+ensemble_pred <- predict(best_model1, newdata = val_data)
+for (i in 1:length(ensemble_pred)) {
+  if (ensemble_pred[i] == 0) {
+    ensemble_pred[i] <- predict(best_model2, newdata = val_data[i, ])
+    if (ensemble_pred[i] == 0 ) {
+      ensemble_pred[i] <- predict(best_model3, newdata = val_data[i, ])
+    }
+  }
+}
+
+# Evaluate the accuracy of the ensemble model
+ensemble_acc <- mean(ensemble_pred == val_data$HeartDisease)
+en_cm <- confusionMatrix(ensemble_pred, val_data$HeartDisease)
+print("Ensemble model confusion matrix:")
+print(en_cm$table)
+
+# Print the accuracy of the models and the ensemble model
+cat("SVM accuracy:", svm_acc, "\n")
+cat("Random Forest accuracy:", rf_acc, "\n")
+cat("Decision Tree accuracy:", dt_acc, "\n")
+cat("Ada Boost accuracy:", ada_acc, "\n")
+cat("Ensemble accuracy:", ensemble_acc, "\n")
+
+new_data <- data.frame(Age = 63, Sex = 1, ChestPainType = 0, RestingBP = 140, Cholesterol = 260, FastingBS = 0, RestingECG = 2, MaxHR = 112, ExerciseAngina = 1, Oldpeak=3,ST_Slope = 1)
+
+# Predict output using each model
+svm_pred <- predict(svm_model, newdata = new_data)
+rf_pred <- predict(rf_model, newdata = new_data)
+dt_pred <- predict(dt_model, newdata = new_data)
+ada_pred <- predict(ada_model, newdata = new_data)
+
+ensemble_pred <- predict(best_model1, newdata = new_data)
+for (i in 1:length(ensemble_pred)) {
+  if (ensemble_pred[i] == 0) {
+    ensemble_pred[i] <- predict(best_model2, newdata = new_data[i, ])
+    if (ensemble_pred[i] == 0) {
+      ensemble_pred[i] <- predict(best_model3, newdata = new_data[i, ])
+    }
+  }
+}
+
+# Print the predicted output from each model
+cat("SVM predicted output:", svm_pred, "\n")
+cat("Random Forest predicted output:", rf_pred, "\n")
+cat("Decision Tree predicted output:", dt_pred, "\n")
+cat("Ada predicted output:", ada_pred, "\n")
+cat("Ensembling classifier predicted output:", ensemble_pred, "\n")
+
+
+library(caret)
+library(ggplot2)
+library(gridExtra)
+
+# Create the confusion matrices
+matrix_data1 <- matrix(c(73, 13, 5, 93), nrow = 2, dimnames = list(Prediction = c(0, 1), Reference = c(0, 1)))
+SVM <- confusionMatrix(matrix_data1)
+
+matrix_data2 <- matrix(c(71, 15, 9, 89), nrow = 2, dimnames = list(Prediction = c(0, 1), Reference = c(0, 1)))
+RANDOMFOREST <- confusionMatrix(matrix_data2)
+
+matrix_data3 <- matrix(c(71, 15, 11, 87), nrow = 2, dimnames = list(Prediction = c(0, 1), Reference = c(0, 1)))
+DECISIONTREE <- confusionMatrix(matrix_data3)
+
+matrix_data4 <- matrix(c(65, 21, 3, 95), nrow = 2, dimnames = list(Prediction = c(0, 1), Reference = c(0, 1)))
+ENSEMBLE <- confusionMatrix(matrix_data4)
+
+# Create the plots
+plot_data1 <- as.data.frame.table(SVM$table)
+plot1 <- ggplot(plot_data1, aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "SVM", x = "Reference", y = "Prediction", fill = "Count") +
+  geom_text(aes(label = Freq), size = 5)
+
+plot_data2 <- as.data.frame.table(RANDOMFOREST$table)
+plot2 <- ggplot(plot_data2, aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Random Forest", x = "Reference", y = "Prediction", fill = "Count") +
+  geom_text(aes(label = Freq), size = 5)
+
+plot_data3 <- as.data.frame.table(DECISIONTREE$table)
+plot3 <- ggplot(plot_data3, aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Decision Tree", x = "Reference", y = "Prediction", fill = "Count") +
+  geom_text(aes(label = Freq), size = 5)
+
+plot_data4 <- as.data.frame.table(ENSEMBLE$table)
+plot4 <- ggplot(plot_data4, aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Ensemble", x = "Reference", y = "Prediction", fill = "Count") +
+  geom_text(aes(label = Freq), size = 5)
+
+# Combine the plots
+grid.arrange(plot1, plot2, plot3, plot4, ncol = 2)
+
+
+# this is code for sensi and speci
+
+# Create the confusion matrices
+svm_cm_matrix <- matrix(c(73, 13, 5, 93), nrow = 2, dimnames = list(Prediction = c(0, 1), Reference = c(0, 1)))
+rf_cm_matrix <- matrix(c(73, 13, 5, 93), nrow = 2, dimnames = list(Prediction = c(0, 1), Reference = c(0, 1)))
+dt_cm_matrix <- matrix(c(71, 15, 11, 87), nrow = 2, dimnames = list(Prediction = c(0, 1), Reference = c(0, 1)))
+enc_cm_matrix <- matrix(c(65, 21, 3, 95), nrow = 2, dimnames = list(Prediction = c(0, 1), Reference = c(0, 1)))
+
+# Calculate sensitivity and specificity for each confusion matrix
+svm_sesitivity <- svm_cm_matrix[1, 1] / sum(svm_cm_matrix[1, ])  
+svm_specificity <- svm_cm_matrix[2, 2] / sum(svm_cm_matrix[2, ]) 
+
+rf_sensitivity <- rf_cm_matrix[1, 1] / sum(rf_cm_matrix[1, ])  
+rf_specificity <- rf_cm_matrix[2, 2] / sum(rf_cm_matrix[2, ])  
+
+dt_sensitivity <- dt_cm_matrix[1, 1] / sum(dt_cm_matrix[1, ])  
+dt_specificity <- dt_cm_matrix[2, 2] / sum(dt_cm_matrix[2, ]) 
+
+enc_sensitivity <- enc_cm_matrix[1, 1] / sum(enc_cm_matrix[1, ]) 
+enc_specificity <- enc_cm_matrix[2, 2] / sum(enc_cm_matrix[2, ])  
+
+# Print the results
+cat("Sensitivity for svm:", svm_sesitivity, "\n")
+cat("Specificity for svm:", svm_specificity, "\n\n")
+
+cat("Sensitivity for rf:", rf_sensitivity, "\n")
+cat("Specificity for rf:", rf_specificity, "\n\n")
+
+cat("Sensitivity for dt:", dt_sensitivity, "\n")
+cat("Specificity for dt:", dt_specificity, "\n\n")
+
+cat("Sensitivity for Enc:", enc_sensitivity, "\n")
+cat("Specificity for Enc:", enc_specificity, "\n")
+
